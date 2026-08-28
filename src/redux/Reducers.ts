@@ -238,7 +238,7 @@ export const cache = (
   }
 };
 
-export default combineReducers<State, ReduxAction>({
+export default combineReducers({
   activityLog,
   cache,
   cookieDeletedCounterSession,

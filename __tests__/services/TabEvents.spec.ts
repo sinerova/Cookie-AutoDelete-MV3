@@ -103,6 +103,14 @@ describe('TabEvents', () => {
     when(global.browser.cookies.getAll)
       .calledWith(expect.any(Object))
       .mockResolvedValue([] as never);
+    // onTabUpdate fires getAllCookieActions un-awaited after a 750 ms timer
+    // with sampleTab's url. jest-when does not treat expect.any(Object) as a
+    // catch-all for subsequent per-argument registrations, so without this
+    // the real Libs.getAllCookiesForDomain would hit a bare jest.fn() that
+    // returns undefined and reject unhandled outside the test context.
+    when(global.browser.cookies.getAll)
+      .calledWith({ domain: 'example.com', storeId: 'firefox-default' })
+      .mockResolvedValue([] as never);
     // Required so the actual cleaning functions being awaited won't run.
     when(spyAlarmEvents.createActiveModeAlarm)
       .calledWith()
@@ -273,6 +281,13 @@ describe('TabEvents', () => {
       expect(global.browser.cookies.set.mock.calls[0][0]).toHaveProperty(
         'firstPartyDomain',
       );
+      // Restore the default resolution for the firstPartyIsolate check.
+      // jest-when keeps per-argument mocks for the life of the mock, so the
+      // rejected mock above would otherwise leak into later tests in this
+      // suite (isFirstPartyIsolate() would report isolation enabled).
+      when(global.browser.cookies.getAll)
+        .calledWith({ domain: '' })
+        .mockResolvedValue([] as never);
     });
   });
 

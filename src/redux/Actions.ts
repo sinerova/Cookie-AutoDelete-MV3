@@ -297,7 +297,8 @@ export const validateSettings: ActionCreator<ThunkAction<
   }
 
   // Minimum 1 second autoclean delay.
-  if (settings[SettingID.CLEAN_DELAY].value < 1) {
+  const cleanDelay = Number(settings[SettingID.CLEAN_DELAY].value);
+  if (cleanDelay < 1) {
     dispatch({
       payload: {
         name: SettingID.CLEAN_DELAY,
@@ -307,7 +308,7 @@ export const validateSettings: ActionCreator<ThunkAction<
     });
   }
   // Maximum 2147483 seconds due to signed 32-bit Integer (ms x 1000)
-  if (settings[SettingID.CLEAN_DELAY].value > 2147483) {
+  if (cleanDelay > 2147483) {
     dispatch({
       payload: {
         name: SettingID.CLEAN_DELAY,

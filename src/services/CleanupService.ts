@@ -694,6 +694,10 @@ export const filterSiteData = (
   const isExpiredRestart = obj.reason === ReasonClean.ExpiredCookieRestart;
   const isCADCookieNoExpression =
     (obj.reason === ReasonClean.CADSiteDataCookie ||
+      // @ts-expect-error [TS2845] second operand is a bare (truthy) enum value; this
+      // collapses `isCADCookieNoExpression` to `obj.expression === undefined`. Preserved
+      // verbatim in the dependency-modernization phase (no cookie-deletion behavior change).
+      // See MODERNIZATION.md - Batch 4 "latent bug".
       ReasonClean.CADSiteDataCookieRestart) &&
     obj.expression === undefined;
   const nonBlankCookieHostName = obj.cookie.hostname.trim() !== '';

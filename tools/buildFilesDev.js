@@ -71,101 +71,96 @@ console.log('TAG to append:  %s\n', TAG);
 const CHROMEFILENAME = EXTNAME + TAG + 'Chrome';
 const FIREFOXFILENAME = EXTNAME + TAG + 'Firefox';
 
-function archiverZip(cb, filename) {
-  if (typeof cb !== 'function') {
-    console.error('callback is not a function!');
-    return null;
-  }
-  const fileStream = fs.createWriteStream(
-    path.join(BUILDDIR, filename + '.zip'),
-  );
-
-  const archive = archiver('zip', {
-    zlib: { level: 9 }, // Sets the Compression Level.
-  });
-
-  // Listen for all archive data to be written
-  // 'close' eent is fired only when a file descriptor is involved
-  function fileOnClose() {
-    console.log(archive.pointer() + ' total bytes');
-    console.log(
-      'archiver has been finalized and the output file descriptor has closed.',
+function archiverZip(filename) {
+  return new Promise((resolve, reject) => {
+    const fileStream = fs.createWriteStream(
+      path.join(BUILDDIR, filename + '.zip'),
     );
-    cb(0);
-  }
 
-  // This event is fired when data source is drained no matter what was the data source.
-  // Not part of archiver but from NodeJS Stream API.
-  function fileOnEnd() {
-    console.log('Data has been drained');
-  }
+    const archive = archiver('zip', {
+      zlib: { level: 9 }, // Sets the Compression Level.
+    });
 
-  console.log('Creating an archive in: %s', fileStream.path);
-
-  fileStream.on('close', fileOnClose);
-  fileStream.on('end', fileOnEnd);
-
-  // Good Practice to catch warnings (ie stat failures and other non-blocking errors)
-  archive.on('warning', function (err) {
-    if (err.code === 'ENOENT') {
-      console.warn(
-        'ARCHIVER WARNING %s: %s (%s)',
-        err.code,
-        err.message,
-        err.data,
+    // Listen for all archive data to be written
+    // 'close' event is fired only when a file descriptor is involved
+    function fileOnClose() {
+      console.log(archive.pointer() + ' total bytes');
+      console.log(
+        'archiver has been finalized and the output file descriptor has closed.',
       );
-    } else {
-      throw err;
+      resolve(0);
     }
+
+    // This event is fired when data source is drained no matter what was the data source.
+    // Not part of archiver but from the NodeJS Stream API.
+    function fileOnEnd() {
+      console.log('Data has been drained');
+    }
+
+    console.log('Creating an archive in: %s', fileStream.path);
+
+    fileStream.on('close', fileOnClose);
+    fileStream.on('end', fileOnEnd);
+
+    // Good Practice to catch warnings (ie stat failures and other non-blocking errors)
+    archive.on('warning', function (err) {
+      if (err.code === 'ENOENT') {
+        console.warn(
+          'ARCHIVER WARNING %s: %s (%s)',
+          err.code,
+          err.message,
+          err.data,
+        );
+      } else {
+        reject(err);
+      }
+    });
+
+    // Good Practice to catch this error explicitly
+    archive.on('error', function (err) {
+      reject(err);
+    });
+
+    // Pipe archive data to the file
+    archive.pipe(fileStream);
+
+    // Append files from Extension Folder.
+    archive.directory(EXTDIR, false);
+
+    archive.finalize();
   });
-
-  // Good Practice to catch his error explicitly
-  archive.on('error', function (err) {
-    throw err;
-  });
-
-  // Pipe archive data to the file
-  archive.pipe(fileStream);
-
-  // Append files from Extension Folder.
-  archive.directory(EXTDIR, false);
-
-  archive.finalize();
 }
 
-function firefoxBuild(cb) {
-  if (typeof cb !== 'function') {
-    console.error('callback is not a function!');
-    return null;
-  }
+async function firefoxBuild() {
   console.log('\nBuilding unsigned extension for Mozilla Firefox...');
 
-  archiverZip(function (r) {
-    if (r === 0) {
-      // Copy ZIP to XPI
-      console.log('Copying .ZIP to .XPI...');
-      fs.copyFileSync(
-        path.join(BUILDDIR, FIREFOXFILENAME + '.zip'),
-        path.join(BUILDDIR, FIREFOXFILENAME + '.xpi'),
-      );
-      console.log('>> Copy Success!');
-      // End of Mozilla Firefox build.
-      console.log('Mozilla Firefox Build Complete!');
-    } else {
-      console.warn(
-        'Archiver was not successful as it returned [%s]. Stopping the rest of the process.',
-        r,
-      );
-    }
-    cb(r);
-  }, FIREFOXFILENAME);
+  let r;
+  try {
+    r = await archiverZip(FIREFOXFILENAME);
+  } catch (err) {
+    console.warn('Archiver error: %s', err.message);
+    return 1;
+  }
+  if (r === 0) {
+    // Copy ZIP to XPI
+    console.log('Copying .ZIP to .XPI...');
+    fs.copyFileSync(
+      path.join(BUILDDIR, FIREFOXFILENAME + '.zip'),
+      path.join(BUILDDIR, FIREFOXFILENAME + '.xpi'),
+    );
+    console.log('>> Copy Success!');
+    // End of Mozilla Firefox build.
+    console.log('Mozilla Firefox Build Complete!');
+  } else {
+    console.warn(
+      'Archiver was not successful as it returned [%s]. Stopping the rest of the process.',
+      r,
+    );
+  }
+  return r;
 }
 
-function chromeBuild(cb) {
-  if (typeof cb !== 'function') {
-    console.error('callback is not a function!');
-    return null;
-  }
+async function chromeBuild() {
   // Copy manifest into memory to preserve it.
   console.log('\nGetting a copy of %s to memory...', MANIFEST);
   const mforig = fs.readFileSync(path.join(EXTDIR, MANIFEST));
@@ -198,47 +193,52 @@ function chromeBuild(cb) {
 
   console.log('\nBuilding unsigned extension for Google Chrome...');
 
-  archiverZip(function (r) {
-    if (r === 0) {
-      // continue
-      // Revert modifications
-      fs.writeFileSync(path.join(EXTDIR, MANIFEST), mforig);
-      console.log('%s has been reverted back to original contents!', MANIFEST);
+  let r;
+  try {
+    r = await archiverZip(CHROMEFILENAME);
+  } catch (err) {
+    console.warn('Archiver error: %s', err.message);
+    r = 1;
+  } finally {
+    // Revert modifications. This MUST always run — even on archiver failure —
+    // otherwise the tracked manifest.json is left in its Chrome-only form
+    // (missing applications/gecko + contextualIdentities, no trailing
+    // newline) and every following build "restores" the corrupted file.
+    fs.writeFileSync(path.join(EXTDIR, MANIFEST), mforig);
+    console.log('%s has been reverted back to original contents!', MANIFEST);
+  }
 
-      // End of Google Chrome build.
-      console.log('Google Chrome Build Complete!');
-    } else {
-      console.warn(
-        'Archiver was not successful as it returned [%s]. Stopping the rest of the process.',
-        r,
-      );
-    }
-    cb(r);
-  }, CHROMEFILENAME);
+  if (r === 0) {
+    // End of Google Chrome build.
+    console.log('Google Chrome Build Complete!');
+  } else {
+    console.warn(
+      'Archiver was not successful as it returned [%s]. Stopping the rest of the process.',
+      r,
+    );
+  }
+  return r;
 }
 
-function mainBuild() {
-  firefoxBuild((r) => {
-    if (r === 0) {
-      // Do Chrome Build
-      chromeBuild((r) => {
-        if (r === 0) {
-          // EdgeChromium Build, for future.
-          console.log('\n\n> All Done! <\n');
-        } else {
-          console.error(
-            'Google Chrome Build did not complete successfully.  Stopping the rest of the Build.',
-          );
-          process.exitCode = 4;
-        }
-      });
+async function mainBuild() {
+  const r = await firefoxBuild();
+  if (r === 0) {
+    const r2 = await chromeBuild();
+    if (r2 === 0) {
+      // EdgeChromium Build, for future.
+      console.log('\n\n> All Done! <\n');
     } else {
       console.error(
-        'Firefox Build did not complete successfully.  Stopping the rest of the progress',
+        'Google Chrome Build did not complete successfully.  Stopping the rest of the Build.',
       );
-      process.exitCode = 3;
+      process.exitCode = 4;
     }
-  });
+  } else {
+    console.error(
+      'Firefox Build did not complete successfully.  Stopping the rest of the progress',
+    );
+    process.exitCode = 3;
+  }
 }
 
 function preCheck(cb) {
